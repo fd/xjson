@@ -2,59 +2,31 @@ package xjson
 
 import (
 	"fmt"
+	"sort"
 )
 
-type Value interface {
-	jsonValue()
+func Parse(b []byte) Value {
+	s := new_scanner(b)
+	v, err := s.scan_value()
+	if err != nil {
+		v = &errorValue{err}
+	}
+	return v
 }
-
-type Null struct {
-	buf []byte
-	beg int
-	end int
-}
-type Bool struct {
-	buf []byte
-	val bool
-	beg int
-	end int
-}
-type Number struct {
-	buf []byte
-	beg int
-	end int
-}
-type String struct {
-	buf []byte
-	beg int
-	end int
-}
-type Array struct {
-	buf    []byte
-	values []Value
-	beg    int
-	end    int
-}
-type Object struct {
-	buf    []byte
-	keys   []Value
-	values []Value
-	beg    int
-	end    int
-}
-
-func (*Null) jsonValue()   {}
-func (*Bool) jsonValue()   {}
-func (*Number) jsonValue() {}
-func (*String) jsonValue() {}
-func (*Array) jsonValue()  {}
-func (*Object) jsonValue() {}
 
 type scanner struct {
 	buf []byte
 	pos int
 	chr int
 }
+
+type numberFlags uint8
+
+const (
+	numberHasFraction numberFlags = 1 << iota
+	numberHasExponent
+	numberIsNegative
+)
 
 func new_scanner(b []byte) *scanner {
 	if len(b) == 0 {
@@ -87,35 +59,44 @@ func (s *scanner) scan_value() (Value, error) {
 		return s.scan_object()
 	default:
 		// parse error
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 }
 
-func (s *scanner) scan_object() (*Object, error) {
+func (s *scanner) scan_object() (*objectValue, error) {
 	var (
-		beg    int
-		end    int
-		keys   []Value
-		values []Value
+		beg     int
+		end     int
+		members []objectMember
 	)
 
 	beg = s.pos
 	if !s.scan_byte('{') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 
 	s.skip_whitespace()
 
+	if s.chr == '}' {
+		s.next()
+		end = s.pos
+		return &objectValue{nil}, nil
+	}
+
 	for {
-		key, err := s.scan_string()
+		key_value, err := s.scan_string()
 		if err != nil {
 			return nil, err
 		}
-		keys = append(keys, key)
+		key_bytes, ok := unquoteBytes(key_value.buf)
+		if !ok {
+			return nil, s.err("invalid string %q", key_value.buf)
+		}
+		key := string(key_bytes)
 
 		s.skip_whitespace()
 		if !s.scan_byte(':') {
-			return nil, s.err("unexpected byte %x", s.chr)
+			return nil, s.err("unexpected byte %q", s.chr)
 		}
 		s.skip_whitespace()
 
@@ -123,7 +104,7 @@ func (s *scanner) scan_object() (*Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		values = append(values, val)
+		members = append(members, objectMember{key, val})
 
 		s.skip_whitespace()
 		if s.chr == ',' {
@@ -133,15 +114,17 @@ func (s *scanner) scan_object() (*Object, error) {
 			s.next()
 			break
 		} else {
-			return nil, s.err("unexpected byte %x", s.chr)
+			return nil, s.err("unexpected byte %q", s.chr)
 		}
 	}
 
+	sort.Sort(sortedObjectMembers(members))
+
 	end = s.pos
-	return &Object{s.buf[beg:end], keys, values, beg, end}, nil
+	return &objectValue{members}, nil
 }
 
-func (s *scanner) scan_array() (*Array, error) {
+func (s *scanner) scan_array() (*arrayValue, error) {
 	var (
 		beg    int
 		end    int
@@ -150,7 +133,14 @@ func (s *scanner) scan_array() (*Array, error) {
 
 	beg = s.pos
 	if !s.scan_byte('[') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
+	}
+
+	s.skip_whitespace()
+	if s.chr == ']' {
+		s.next()
+		end = s.pos
+		return &arrayValue{values}, nil
 	}
 
 	for {
@@ -168,15 +158,15 @@ func (s *scanner) scan_array() (*Array, error) {
 			s.next()
 			break
 		} else {
-			return nil, s.err("unexpected byte %x", s.chr)
+			return nil, s.err("unexpected byte %q", s.chr)
 		}
 	}
 
 	end = s.pos
-	return &Array{s.buf[beg:end], values, beg, end}, nil
+	return &arrayValue{values}, nil
 }
 
-func (s *scanner) scan_null() (*Null, error) {
+func (s *scanner) scan_null() (*nullValue, error) {
 	var (
 		beg int
 		end int
@@ -184,23 +174,23 @@ func (s *scanner) scan_null() (*Null, error) {
 
 	beg = s.pos
 	if !s.scan_byte('n') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('u') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('l') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('l') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	end = s.pos
 
-	return &Null{s.buf[beg:end], beg, end}, nil
+	return &nullValue{s.buf[beg:end]}, nil
 }
 
-func (s *scanner) scan_false() (*Bool, error) {
+func (s *scanner) scan_false() (*boolValue, error) {
 	var (
 		beg int
 		end int
@@ -208,26 +198,26 @@ func (s *scanner) scan_false() (*Bool, error) {
 
 	beg = s.pos
 	if !s.scan_byte('f') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('a') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('l') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('s') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('e') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	end = s.pos
 
-	return &Bool{s.buf[beg:end], false, beg, end}, nil
+	return &boolValue{s.buf[beg:end], false}, nil
 }
 
-func (s *scanner) scan_true() (*Bool, error) {
+func (s *scanner) scan_true() (*boolValue, error) {
 	var (
 		beg int
 		end int
@@ -235,23 +225,23 @@ func (s *scanner) scan_true() (*Bool, error) {
 
 	beg = s.pos
 	if !s.scan_byte('t') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('r') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('u') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	if !s.scan_byte('e') {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 	end = s.pos
 
-	return &Bool{s.buf[beg:end], true, beg, end}, nil
+	return &boolValue{s.buf[beg:end], true}, nil
 }
 
-func (s *scanner) scan_string() (*String, error) {
+func (s *scanner) scan_string() (*stringValue, error) {
 	var (
 		beg int
 		end int
@@ -273,10 +263,10 @@ func (s *scanner) scan_string() (*String, error) {
 				s.next()
 			} else if s.chr == 'u' {
 				if !s.scan_hex_digits() {
-					return nil, s.err("unexpected byte %x", s.chr)
+					return nil, s.err("unexpected byte %q", s.chr)
 				}
 			} else {
-				return nil, s.err("unexpected byte %x", s.chr)
+				return nil, s.err("unexpected byte %q", s.chr)
 			}
 		} else {
 			s.next()
@@ -284,42 +274,53 @@ func (s *scanner) scan_string() (*String, error) {
 	}
 
 	end = s.pos
-	return &String{s.buf[beg:end], beg, end}, nil
+
+	b, ok := unquoteBytes(s.buf[beg:end])
+	if !ok {
+		return nil, s.err("invalid string: %q", s.buf[beg:end])
+	}
+
+	return &stringValue{s.buf[beg:end], string(b)}, nil
 }
 
-func (s *scanner) scan_number() (*Number, error) {
+func (s *scanner) scan_number() (*numberValue, error) {
 	var (
-		beg int
-		end int
+		beg   int
+		end   int
+		flags numberFlags
 	)
 
 	beg = s.pos
-	s.scan_byte('-')
+	if s.scan_byte('-') {
+		flags |= numberIsNegative
+	}
 
 	if s.scan_byte('0') {
 		// ok
 	} else if '1' <= s.chr && s.chr <= '9' {
 		s.scan_dec_digits()
 	} else {
-		return nil, s.err("unexpected byte %x", s.chr)
+		return nil, s.err("unexpected byte %q", s.chr)
 	}
 
 	if s.scan_byte('.') {
+		flags |= numberHasFraction
 		if !s.scan_dec_digits() {
-			return nil, s.err("unexpected byte %x", s.chr)
+			return nil, s.err("unexpected byte %q", s.chr)
 		}
 	}
 
 	if s.chr == 'e' || s.chr == 'E' {
 		s.next()
+		flags |= numberHasExponent
 		s.scan_sign()
 		if !s.scan_dec_digits() {
-			return nil, s.err("unexpected byte %x", s.chr)
+			return nil, s.err("unexpected byte %q", s.chr)
 		}
 	}
 
 	end = s.pos
-	return &Number{s.buf[beg:end], beg, end}, nil
+	return &numberValue{s.buf[beg:end], flags}, nil
 }
 
 func (s *scanner) scan_byte(c byte) bool {
@@ -356,19 +357,24 @@ func (s *scanner) scan_sign() bool {
 
 func (s *scanner) skip_whitespace() {
 	for {
-		if s.chr == ' ' || s.chr == '\t' || s.chr == '\r' || s.chr == '\n' {
+		if s.chr == ' ' || s.chr == '\t' || s.chr == '\f' || s.chr == '\r' || s.chr == '\n' {
 			s.next()
+		} else {
+			break
 		}
-		break
 	}
 }
 
 func (s *scanner) next() bool {
-	if s.pos < len(s.buf) {
-		s.chr = int(s.buf[s.pos])
-		s.pos++
-		return true
+	if s.pos == len(s.buf) {
+		s.chr = -1
+		return false
 	}
-	s.chr = -1
-	return false
+	s.pos++
+	if s.pos == len(s.buf) {
+		s.chr = -1
+		return false
+	}
+	s.chr = int(s.buf[s.pos])
+	return true
 }
