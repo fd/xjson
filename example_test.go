@@ -8,13 +8,13 @@ import (
 
 func Example() {
 	var js = `
-    {
-      "people": [
-        { "name": "Simon Menke" },
-        { "name": "Hans Spooren", "first name": "Hans" }
-      ]
-    }
-  `
+		{
+			"people": [
+				{ "name": "Simon Menke" },
+				{ "name": "Hans Spooren", "first name": "Hans" }
+				]
+			}
+		`
 
 	var (
 		r   = Parse([]byte(js))
@@ -52,13 +52,13 @@ func Example() {
 
 func ExampleValue_GetPath() {
 	var js = `
-    {
-      "people": [
-        { "name": "Simon Menke" },
-        { "name": "Hans Spooren", "first name": "Hans" }
-      ]
-    }
-  `
+		{
+			"people": [
+				{ "name": "Simon Menke" },
+				{ "name": "Hans Spooren", "first name": "Hans" }
+				]
+			}
+		`
 
 	var (
 		r   = Parse([]byte(js))
@@ -96,13 +96,13 @@ func ExampleValue_GetPath() {
 
 func ExampleValue_UnmarshalJSON() {
 	var js = `
-    {
-      "people": [
-        { "name": "Simon Menke" },
-        { "name": "Hans Spooren", "first name": "Hans" }
-      ]
-    }
-  `
+		{
+			"people": [
+				{ "name": "Simon Menke" },
+				{ "name": "Hans Spooren", "first name": "Hans" }
+				]
+			}
+		`
 
 	type people_t struct {
 		People []Value
@@ -138,13 +138,13 @@ func ExampleValue_UnmarshalJSON() {
 
 func ExampleValue_MarshalJSON() {
 	var js = `
-    {
-      "people": [
-        { "name": "Simon Menke" },
-        { "name": "Hans Spooren", "first name": "Hans" }
-      ]
-    }
-  `
+		{
+			"people": [
+				{ "name": "Simon Menke" },
+				{ "name": "Hans Spooren", "first name": "Hans" }
+				]
+			}
+		`
 
 	type people_t struct {
 		People []Value
@@ -171,13 +171,13 @@ func ExampleValue_MarshalJSON() {
 
 func ExampleValue_Unwrap() {
 	var js = `
-    {
-      "people": [
-        { "name": "Simon Menke" },
-        { "name": "Hans Spooren", "first name": "Hans" }
-      ]
-    }
-  `
+		{
+			"people": [
+				{ "name": "Simon Menke" },
+				{ "name": "Hans Spooren", "first name": "Hans" }
+				]
+			}
+		`
 
 	type Person map[string]string
 
